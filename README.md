@@ -20,7 +20,7 @@ Use of this model is governed by the [NVIDIA Open Model License](https://www.nvi
 Audio2Face-3D-v2.3.1-Claire is designed for developers and researchers working on audio-driven animation and emotion detection applications, such as virtual assistants, chatbots, and affective computing systems. <br>
 
 ### Release Date:  <br>
-Hugging Face: 08/27/2025 via https://huggingface.co/nvidia/Audio2Face-3D-v2.3.1-Claire <br> 
+Hugging Face: 09/24/2025 via https://huggingface.co/nvidia/Audio2Face-3D-v2.3.1-Claire <br> 
 
 ## References(s):
 NVIDIA, Audio2Face-3D: Audio-driven Realistic Facial Animation For Digital Avatars, 2025. <br>
