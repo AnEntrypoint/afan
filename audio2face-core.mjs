@@ -17,6 +17,7 @@ const EXPLICIT_EMOTIONS = [
   'grief', 'joy', 'outofbreath', 'pain', 'sadness'
 ];
 const UPPER_FACE_MAX = 19;
+const RING_CAPACITY = 16000 * 4;
 const sigmoid = x => 1 / (1 + Math.exp(-x));
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 
@@ -25,15 +26,30 @@ export class Audio2FaceCore {
   static get EMOTIONS() { return EXPLICIT_EMOTIONS; }
 
   constructor({ ort, sampleRate, smoothingFactor, config } = {}) {
-    Object.assign(this, {
-      ort, session: null, sampleRate: sampleRate || 16000,
-      audioBuffer: new Float32Array(0), lastResult: null,
-      smoothingUpper: smoothingFactor ?? 0.3, smoothingLower: smoothingFactor ?? 0.3,
-      bufferLen: 8320, bufferOfs: 4160, skinOffset: 0, skinSize: 140,
-      tongueOffset: 140, tongueSize: 10, jawOffset: 150, jawSize: 15,
-      eyesOffset: 165, eyesSize: 4, emotionVector: new Float32Array(26),
-      bsWeightMultipliers: null, bsWeightOffsets: null, bsSolveActivePoses: null, faceParams: {}
-    });
+    this.ort = ort;
+    this.session = null;
+    this.sampleRate = sampleRate || 16000;
+    this.smoothingUpper = smoothingFactor ?? 0.3;
+    this.smoothingLower = smoothingFactor ?? 0.3;
+    this.bufferLen = 8320;
+    this.bufferOfs = 4160;
+    this.skinOffset = 0;
+    this.skinSize = 140;
+    this.tongueOffset = 140;
+    this.tongueSize = 10;
+    this.jawOffset = 150;
+    this.jawSize = 15;
+    this.eyesOffset = 165;
+    this.eyesSize = 4;
+    this.emotionVector = new Float32Array(26);
+    this.bsWeightMultipliers = null;
+    this.bsWeightOffsets = null;
+    this.bsSolveActivePoses = null;
+    this.faceParams = {};
+    this.lastResult = null;
+    this._ring = new Float32Array(RING_CAPACITY);
+    this._ringLen = 0;
+    this._chunkLock = null;
     if (config) this.loadConfig(config);
   }
 
@@ -43,6 +59,7 @@ export class Audio2FaceCore {
       this.bufferLen = ap.buffer_len ?? this.bufferLen;
       this.bufferOfs = ap.buffer_ofs ?? this.bufferOfs;
       this.sampleRate = ap.samplerate ?? this.sampleRate;
+      if (this.bufferOfs > this.bufferLen) this.bufferOfs = this.bufferLen;
     }
     if (fp) {
       this.faceParams = fp;
@@ -68,7 +85,7 @@ export class Audio2FaceCore {
 
   setEmotion(name, value) {
     const idx = EXPLICIT_EMOTIONS.indexOf(name);
-    if (idx === -1) throw new Error(`Unknown emotion: ${name}`);
+    if (idx === -1) throw new Error(`Unknown emotion: ${name}. Valid: ${EXPLICIT_EMOTIONS.join(', ')}`);
     this.emotionVector[idx] = clamp(value);
   }
 
@@ -76,7 +93,7 @@ export class Audio2FaceCore {
   getEmotionVector() { return new Float32Array(this.emotionVector); }
 
   async runInference(audioChunk) {
-    if (!this.session) throw new Error('No session loaded');
+    if (!this.session) throw new Error('No session loaded. Call loadModel() first.');
     const feeds = {};
     const names = this.session.inputNames;
     const audioKey = names.includes('audio') ? 'audio' : names.includes('input') ? 'input' : names[0];
@@ -89,13 +106,13 @@ export class Audio2FaceCore {
   parseOutputs(outputs) {
     const data = outputs[this.session.outputNames[0]].data;
     const numBs = Math.min(ARKIT_BLENDSHAPES.length, this.skinSize);
-    const blendshapes = [];
+    const blendshapes = new Array(numBs);
     for (let i = 0; i < numBs; i++) {
       let val = clamp(sigmoid(data[this.skinOffset + i] * 0.1));
       if (this.bsWeightMultipliers) val *= this.bsWeightMultipliers[i] ?? 1;
       if (this.bsWeightOffsets) val += this.bsWeightOffsets[i] ?? 0;
       if (this.bsSolveActivePoses && !this.bsSolveActivePoses[i]) val = 0;
-      blendshapes.push({ name: ARKIT_BLENDSHAPES[i], value: clamp(val) });
+      blendshapes[i] = { name: ARKIT_BLENDSHAPES[i], value: clamp(val) };
     }
     const jaw = clamp(sigmoid((data[this.jawOffset] || 0) * 0.1));
     const eo = this.eyesOffset;
@@ -105,21 +122,40 @@ export class Audio2FaceCore {
     };
   }
 
+  _ringAppend(audioData) {
+    const needed = this._ringLen + audioData.length;
+    if (needed > this._ring.length) {
+      const newCap = Math.max(needed * 2, RING_CAPACITY);
+      const grown = new Float32Array(newCap);
+      grown.set(this._ring.subarray(0, this._ringLen));
+      this._ring = grown;
+    }
+    this._ring.set(audioData, this._ringLen);
+    this._ringLen += audioData.length;
+  }
+
+  _ringConsume(len) {
+    this._ring.copyWithin(0, len, this._ringLen);
+    this._ringLen -= len;
+  }
+
   async processAudioChunk(audioData, options = {}) {
-    if (!this.session) throw new Error('No session loaded');
-    if (options.emotion) this.setEmotions(options.emotion);
-    const buf = new Float32Array(this.audioBuffer.length + audioData.length);
-    buf.set(this.audioBuffer);
-    buf.set(audioData, this.audioBuffer.length);
-    this.audioBuffer = buf;
-    if (this.audioBuffer.length < this.bufferLen) return this.lastResult || this.getEmptyResult();
-    const chunk = this.audioBuffer.slice(0, this.bufferLen);
-    this.audioBuffer = this.audioBuffer.slice(this.bufferOfs);
-    const result = await this.runInference(chunk);
-    if (this.lastResult)
-      result.blendshapes = this.smoothBlendshapes(this.lastResult.blendshapes, result.blendshapes);
-    this.lastResult = result;
-    return result;
+    if (!this.session) throw new Error('No session loaded. Call loadModel() first.');
+    while (this._chunkLock) await this._chunkLock;
+    let unlock;
+    this._chunkLock = new Promise(r => { unlock = r; });
+    try {
+      if (options.emotion) this.setEmotions(options.emotion);
+      if (audioData.length > 0) this._ringAppend(audioData);
+      if (this._ringLen < this.bufferLen) return this.lastResult || this.getEmptyResult();
+      const chunk = this._ring.slice(0, this.bufferLen);
+      this._ringConsume(this.bufferOfs);
+      const result = await this.runInference(chunk);
+      if (this.lastResult)
+        result.blendshapes = this.smoothBlendshapes(this.lastResult.blendshapes, result.blendshapes);
+      this.lastResult = result;
+      return result;
+    } finally { this._chunkLock = null; unlock(); }
   }
 
   smoothBlendshapes(prev, curr) {
@@ -161,12 +197,14 @@ export class Audio2FaceCore {
   setSmoothingRegion(region, factor) {
     if (region === 'upper') this.smoothingUpper = clamp(factor);
     else if (region === 'lower') this.smoothingLower = clamp(factor);
-    else throw new Error(`Unknown region: ${region}`);
+    else throw new Error(`Unknown region: ${region}. Valid: upper, lower`);
   }
 
   dispose() {
-    if (this.session) { this.session.release(); this.session = null; }
-    this.audioBuffer = new Float32Array(0);
+    try { if (this.session) this.session.release(); } catch (_) {}
+    this.session = null;
+    this._ring = new Float32Array(RING_CAPACITY);
+    this._ringLen = 0;
     this.lastResult = null;
   }
 }
