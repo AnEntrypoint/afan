@@ -1,54 +1,51 @@
 {
-  "name": "audio2face-3d-sdk",
-  "version": "2.0.0",
-  "description": "Audio2Face-3D SDK for browser and Node.js — real-time audio-driven facial animation with ARKit blendshapes",
-  "main": "audio2face-sdk-node.mjs",
-  "browser": "audio2face-sdk-browser.js",
-  "types": "audio2face-sdk.d.ts",
+  "name": "afan",
+  "version": "1.0.0",
+  "description": "Audio-driven facial animation for VRM — convert audio to ARKit blendshapes",
+  "main": "./src/index.mjs",
+  "browser": "./src/browser.mjs",
   "type": "module",
+  "bin": {
+    "afan": "./src/cli.mjs"
+  },
   "exports": {
     ".": {
-      "browser": "./audio2face-sdk-browser.js",
-      "node": "./audio2face-sdk-node.mjs",
-      "types": "./audio2face-sdk.d.ts",
-      "default": "./audio2face-sdk-browser.js"
+      "browser": "./src/browser.mjs",
+      "node": "./src/index.mjs",
+      "default": "./src/browser.mjs"
     },
-    "./core": "./audio2face-core.mjs"
+    "./animation": "./src/animation.mjs",
+    "./api": "./src/api.mjs"
   },
   "files": [
-    "audio2face-core.mjs",
-    "audio2face-sdk-browser.js",
-    "audio2face-sdk-node.mjs",
-    "audio2face-sdk.d.ts",
-    "a2f_ms_config.json",
-    "onnxruntime-web.min.js",
-    "ort-wasm-simd-threaded.wasm",
-    "ort-wasm-simd-threaded.jsep.mjs",
-    "ort-wasm-simd-threaded.mjs"
+    "src",
+    "config.json"
   ],
   "sideEffects": false,
   "engines": {
     "node": ">=18.0.0"
   },
   "scripts": {
-    "start": "node server.js",
-    "test": "node test-node.mjs"
+    "start": "node src/cli.mjs",
+    "postinstall": "node src/download.mjs"
   },
   "dependencies": {
-    "onnxruntime-node": "^1.21.0"
-  },
-  "optionalDependencies": {
-    "express": "^4.18.2"
+    "onnxruntime-node": "^1.21.0",
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1"
   },
   "keywords": [
     "audio2face",
     "facial-animation",
-    "onnx",
-    "blendshapes",
+    "vrm",
     "arkit",
-    "webgpu",
-    "realtime",
+    "blendshapes",
     "lip-sync"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AnEntrypoint/afan"
+  },
+  "author": "AnEntrypoint",
   "license": "MIT"
 }

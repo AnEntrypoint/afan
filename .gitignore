@@ -1,4 +1,6 @@
-.glootie-stop-verified
-.prd
 node_modules/
-network_actual.onnx
+.prd
+*.log
+.DS_Store
+.glootie-stop-verified
+model.onnx
