@@ -2,6 +2,8 @@ name: Publish to npm
 
 on:
   push:
+    branches:
+      - '**'
     tags:
       - 'v*'
 
@@ -19,10 +21,6 @@ jobs:
       
       - name: Install dependencies
         run: npm ci
-      
-      - name: Download model
-        run: |
-          curl -L -o model.onnx "https://github.com/AnEntrypoint/afan/releases/download/v1.0.0/model.onnx" || echo "Model not found in releases, skipping"
       
       - name: Publish
         run: npm publish
